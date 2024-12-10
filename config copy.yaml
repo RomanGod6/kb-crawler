@@ -1,0 +1,13 @@
+database:
+  url: "neondburlstring"
+
+server:
+  port: 8080
+
+crawler:
+  sitemapURL: "https://rmm.datto.com/help/en/Sitemap.xml"
+  userAgent: "KB Crawler Bot v1.0"
+  crawlInterval: "24h"
+  maxDepth: 15
+  allowedDomains:
+    - "rmm.datto.com"
