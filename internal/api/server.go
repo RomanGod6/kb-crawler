@@ -56,6 +56,16 @@ func NewServer(port int, store storage.Store) *Server {
 			categories.GET("/:id", handler.GetCategory)
 			categories.GET("/:id/articles", handler.GetArticlesByCategory)
 		}
+
+		// Crawler Config routes
+		crawlers := api.Group("/crawlers")
+		{
+			crawlers.GET("", handler.ListCrawlerConfigs)
+			crawlers.GET("/:id", handler.GetCrawlerConfig)
+			crawlers.POST("", handler.CreateCrawlerConfig)
+			crawlers.PUT("/:id", handler.UpdateCrawlerConfig)
+			crawlers.DELETE("/:id", handler.DeleteCrawlerConfig)
+		}
 	}
 
 	return &Server{

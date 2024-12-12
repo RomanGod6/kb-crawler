@@ -35,8 +35,23 @@ type Tag struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// ArticleTag represents the many-to-many relationship between articles and tags
 type ArticleTag struct {
 	ArticleID uuid.UUID `json:"article_id"`
 	TagID     uuid.UUID `json:"tag_id"`
+}
+
+type CrawlerConfig struct {
+	ID              uuid.UUID  `json:"id"`
+	SitemapURL      string     `json:"sitemapURL"`
+	MapURL          string     `json:"mapURL"`
+	UserAgent       string     `json:"userAgent"`
+	CrawlInterval   string     `json:"crawlInterval"`
+	MaxDepth        int        `json:"maxDepth"`
+	DefaultCategory string     `json:"defaultCategory"`
+	AllowedDomains  []string   `json:"allowedDomains"`
+	Status          string     `json:"status"`
+	LastRun         *time.Time `json:"lastRun,omitempty"`
+	Errors          []string   `json:"errors,omitempty"`
+	CreatedAt       time.Time  `json:"createdAt"`
+	UpdatedAt       time.Time  `json:"updatedAt"`
 }

@@ -6,6 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/romangod6/kb-crawler/internal/models"
 	"github.com/romangod6/kb-crawler/internal/storage"
 )
 
@@ -28,6 +29,7 @@ func NewHandler(store storage.Store) *Handler {
 	return &Handler{store: store}
 }
 
+// Existing handlers
 func (h *Handler) ListArticles(c *gin.Context) {
 	page, limit := getPaginationParams(c)
 	offset := (page - 1) * limit
@@ -141,6 +143,101 @@ func (h *Handler) GetArticlesByCategory(c *gin.Context) {
 		Page:  page,
 		Limit: limit,
 	})
+}
+
+// New Crawler Config Handlers
+func (h *Handler) ListCrawlerConfigs(c *gin.Context) {
+	configs, err := h.store.ListCrawlerConfigs(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: "Failed to fetch crawler configs"})
+		return
+	}
+
+	c.JSON(http.StatusOK, configs)
+}
+
+func (h *Handler) GetCrawlerConfig(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "Invalid crawler config ID"})
+		return
+	}
+
+	config, err := h.store.GetCrawlerConfig(c.Request.Context(), id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: "Failed to fetch crawler config"})
+		return
+	}
+
+	if config == nil {
+		c.JSON(http.StatusNotFound, ErrorResponse{Error: "Crawler config not found"})
+		return
+	}
+
+	c.JSON(http.StatusOK, config)
+}
+
+func (h *Handler) CreateCrawlerConfig(c *gin.Context) {
+	var config models.CrawlerConfig
+	if err := c.ShouldBindJSON(&config); err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "Invalid crawler config data"})
+		return
+	}
+
+	// Generate new UUID if not provided
+	if config.ID == uuid.Nil {
+		config.ID = uuid.New()
+	}
+
+	// Set default status if not provided
+	if config.Status == "" {
+		config.Status = "stopped"
+	}
+
+	if err := h.store.CreateCrawlerConfig(c.Request.Context(), &config); err != nil {
+		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: "Failed to create crawler config"})
+		return
+	}
+
+	c.JSON(http.StatusCreated, config)
+}
+
+func (h *Handler) UpdateCrawlerConfig(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "Invalid crawler config ID"})
+		return
+	}
+
+	var config models.CrawlerConfig
+	if err := c.ShouldBindJSON(&config); err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "Invalid crawler config data"})
+		return
+	}
+
+	config.ID = id
+
+	if err := h.store.UpdateCrawlerConfig(c.Request.Context(), &config); err != nil {
+		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: "Failed to update crawler config"})
+		return
+	}
+
+	c.JSON(http.StatusOK, config)
+}
+
+func (h *Handler) DeleteCrawlerConfig(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "Invalid crawler config ID"})
+		return
+	}
+
+	if err := h.store.DeleteCrawlerConfig(c.Request.Context(), id); err != nil {
+		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: "Failed to delete crawler config"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"status": "deleted"})
 }
 
 // Utility functions

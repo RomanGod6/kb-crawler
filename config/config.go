@@ -14,11 +14,13 @@ type Config struct {
 		Port int
 	}
 	Crawler struct {
-		SitemapURL     string
-		UserAgent      string
-		CrawlInterval  string
-		MaxDepth       int
-		AllowedDomains []string
+		SitemapURL      string
+		MapURL          string // Added
+		UserAgent       string
+		CrawlInterval   string
+		MaxDepth        int
+		DefaultCategory string // Added
+		AllowedDomains  []string
 	}
 }
 
@@ -33,6 +35,7 @@ func LoadConfig() (*Config, error) {
 	viper.SetDefault("crawler.useragent", "KB Crawler Bot v1.0")
 	viper.SetDefault("crawler.maxdepth", 10)
 	viper.SetDefault("crawler.crawlinterval", "24h")
+	viper.SetDefault("crawler.defaultcategory", "Datto RMM")
 
 	if err := viper.ReadInConfig(); err != nil {
 		return nil, err

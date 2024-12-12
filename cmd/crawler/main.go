@@ -36,13 +36,23 @@ func main() {
 
 	// Initialize crawler
 	crawlerConfig := &crawler.CrawlerConfig{
-		SitemapURL:     cfg.Crawler.SitemapURL,
-		UserAgent:      cfg.Crawler.UserAgent,
-		MaxDepth:       cfg.Crawler.MaxDepth,
-		AllowedDomains: cfg.Crawler.AllowedDomains,
+		SitemapURL:      cfg.Crawler.SitemapURL,
+		MapURL:          cfg.Crawler.MapURL,
+		UserAgent:       cfg.Crawler.UserAgent,
+		MaxDepth:        cfg.Crawler.MaxDepth,
+		DefaultCategory: cfg.Crawler.DefaultCategory,
+		AllowedDomains:  cfg.Crawler.AllowedDomains,
 	}
 
 	c := crawler.NewCrawler(store, crawlerConfig)
+
+	// First, map the category structure
+	log.Println("Mapping category structure...")
+	categoryStructure, err := c.MapCategoryStructure(context.Background())
+	if err != nil {
+		log.Fatalf("Failed to map category structure: %v", err)
+	}
+	log.Println("Category structure mapped successfully")
 
 	// Initialize API server
 	server := api.NewServer(cfg.Server.Port, store)
@@ -68,14 +78,14 @@ func main() {
 	ticker := time.NewTicker(cfg.GetCrawlDuration())
 	go func() {
 		// Initial crawl
-		if err := c.Crawl(ctx); err != nil {
+		if err := c.Crawl(ctx, categoryStructure); err != nil {
 			log.Printf("Initial crawl error: %v", err)
 		}
 
 		for {
 			select {
 			case <-ticker.C:
-				if err := c.Crawl(ctx); err != nil {
+				if err := c.Crawl(ctx, categoryStructure); err != nil {
 					log.Printf("Crawl error: %v", err)
 				}
 			case <-ctx.Done():
