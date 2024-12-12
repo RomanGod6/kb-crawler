@@ -303,3 +303,26 @@ func (c *Crawler) Crawl(ctx context.Context, cs *CategoryStructure) error {
 		return nil
 	}
 }
+func (h *Crawler) runCrawler(config models.CrawlerConfig) error {
+	// Example of a simple crawl process
+	crawler := NewCrawler(h.store, &CrawlerConfig{
+		SitemapURL:      config.SitemapURL,
+		UserAgent:       config.UserAgent,
+		MaxDepth:        config.MaxDepth,
+		AllowedDomains:  config.AllowedDomains,
+		DefaultCategory: config.DefaultCategory,
+	})
+
+	categoryStructure, err := crawler.MapCategoryStructure(context.Background())
+	if err != nil {
+		return fmt.Errorf("failed to map category structure: %w", err)
+	}
+
+	// Start crawling
+	err = crawler.Crawl(context.Background(), categoryStructure)
+	if err != nil {
+		return fmt.Errorf("crawl failed: %w", err)
+	}
+
+	return nil
+}

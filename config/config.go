@@ -14,17 +14,19 @@ type Config struct {
 		Port int
 	}
 	Crawler struct {
-		SitemapURL      string
-		MapURL          string // Added
-		UserAgent       string
-		CrawlInterval   string
-		MaxDepth        int
-		DefaultCategory string // Added
-		AllowedDomains  []string
+		SitemapURL          string
+		MapURL              string
+		UserAgent           string
+		CrawlInterval       string
+		MaxDepth            int
+		DefaultCategory     string
+		AllowedDomains      []string
+		MaxConcurrentCrawls int // Add this
 	}
 }
 
 func LoadConfig() (*Config, error) {
+	viper.SetDefault("crawler.maxconcurrentcrawls", 5)
 	viper.SetConfigName("config")
 	viper.SetConfigType("yaml")
 	viper.AddConfigPath(".")

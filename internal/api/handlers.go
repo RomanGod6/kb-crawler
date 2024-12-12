@@ -1,11 +1,16 @@
 package api
 
 import (
+	"context"
+	"fmt"
+	"log"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/romangod6/kb-crawler/internal/crawler"
 	"github.com/romangod6/kb-crawler/internal/models"
 	"github.com/romangod6/kb-crawler/internal/storage"
 )
@@ -153,6 +158,10 @@ func (h *Handler) ListCrawlerConfigs(c *gin.Context) {
 		return
 	}
 
+	if configs == nil {
+		configs = []*models.CrawlerConfig{}
+	}
+
 	c.JSON(http.StatusOK, configs)
 }
 
@@ -253,4 +262,67 @@ func getPaginationParams(c *gin.Context) (page, limit int) {
 	}
 
 	return page, limit
+}
+func (h *Handler) StartCrawl(c *gin.Context) {
+	var crawlConfig models.CrawlerConfig
+	if err := c.ShouldBindJSON(&crawlConfig); err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{Error: "Invalid request payload"})
+		return
+	}
+
+	// Generate new UUID for the crawl
+	crawlConfig.ID = uuid.New()
+	crawlConfig.Status = "Running"
+	crawlConfig.CreatedAt = time.Now()
+	crawlConfig.UpdatedAt = time.Now()
+
+	// Save the crawl config in the database
+	if err := h.store.CreateCrawlerConfig(c.Request.Context(), &crawlConfig); err != nil {
+		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: "Failed to save crawl configuration"})
+		return
+	}
+
+	// Start the crawl in a Goroutine
+	go func(config models.CrawlerConfig) {
+		log.Printf("Starting crawl for %s...", config.SitemapURL)
+
+		// Update logs and status during crawling
+		err := h.runCrawler(config)
+		if err != nil {
+			log.Printf("Crawl failed for %s: %v", config.SitemapURL, err)
+			config.Status = "Error"
+			config.Errors = append(config.Errors, err.Error())
+		} else {
+			log.Printf("Crawl completed for %s", config.SitemapURL)
+			config.Status = "Stopped"
+		}
+
+		config.UpdatedAt = time.Now()
+		if updateErr := h.store.UpdateCrawlerConfig(context.Background(), &config); updateErr != nil {
+			log.Printf("Failed to update crawl config: %v", updateErr)
+		}
+	}(crawlConfig)
+
+	c.JSON(http.StatusAccepted, crawlConfig)
+}
+func (h *Handler) runCrawler(config models.CrawlerConfig) error {
+	crawlerInstance := crawler.NewCrawler(h.store, &crawler.CrawlerConfig{
+		SitemapURL:      config.SitemapURL,
+		UserAgent:       config.UserAgent,
+		MaxDepth:        config.MaxDepth,
+		AllowedDomains:  config.AllowedDomains,
+		DefaultCategory: config.DefaultCategory,
+	})
+
+	categoryStructure, err := crawlerInstance.MapCategoryStructure(context.Background())
+	if err != nil {
+		return fmt.Errorf("failed to map category structure: %w", err)
+	}
+
+	err = crawlerInstance.Crawl(context.Background(), categoryStructure)
+	if err != nil {
+		return fmt.Errorf("crawl failed: %w", err)
+	}
+
+	return nil
 }

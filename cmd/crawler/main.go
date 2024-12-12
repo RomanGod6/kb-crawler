@@ -3,15 +3,16 @@ package main
 import (
 	"context"
 	"log"
-	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
 	"github.com/romangod6/kb-crawler/config"
 	"github.com/romangod6/kb-crawler/internal/api"
 	"github.com/romangod6/kb-crawler/internal/crawler"
+	"github.com/romangod6/kb-crawler/internal/models"
 	"github.com/romangod6/kb-crawler/internal/storage"
 )
 
@@ -34,81 +35,110 @@ func main() {
 		log.Fatalf("Failed to initialize database tables: %v", err)
 	}
 
-	// Initialize crawler
-	crawlerConfig := &crawler.CrawlerConfig{
-		SitemapURL:      cfg.Crawler.SitemapURL,
-		MapURL:          cfg.Crawler.MapURL,
-		UserAgent:       cfg.Crawler.UserAgent,
-		MaxDepth:        cfg.Crawler.MaxDepth,
-		DefaultCategory: cfg.Crawler.DefaultCategory,
-		AllowedDomains:  cfg.Crawler.AllowedDomains,
-	}
-
-	c := crawler.NewCrawler(store, crawlerConfig)
-
-	// First, map the category structure
-	log.Println("Mapping category structure...")
-	categoryStructure, err := c.MapCategoryStructure(context.Background())
-	if err != nil {
-		log.Fatalf("Failed to map category structure: %v", err)
-	}
-	log.Println("Category structure mapped successfully")
-
 	// Initialize API server
 	server := api.NewServer(cfg.Server.Port, store)
 
-	// Setup graceful shutdown
+	// Setup periodic crawling
+	ticker := time.NewTicker(cfg.GetCrawlDuration())
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Handle shutdown signals
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-
-	// Start API server in a goroutine
 	go func() {
-		log.Printf("Starting API server on port %d", cfg.Server.Port)
-		if err := server.Start(); err != nil && err != http.ErrServerClosed {
-			log.Printf("Server error: %v", err)
-			cancel()
-		}
-	}()
-
-	// Start crawler in a goroutine
-	ticker := time.NewTicker(cfg.GetCrawlDuration())
-	go func() {
-		// Initial crawl
-		if err := c.Crawl(ctx, categoryStructure); err != nil {
-			log.Printf("Initial crawl error: %v", err)
-		}
-
 		for {
 			select {
 			case <-ticker.C:
-				if err := c.Crawl(ctx, categoryStructure); err != nil {
-					log.Printf("Crawl error: %v", err)
-				}
+				log.Println("Starting periodic crawl...")
+				runAllCrawls(ctx, store, cfg.Crawler.MaxConcurrentCrawls)
 			case <-ctx.Done():
 				return
 			}
 		}
 	}()
 
-	// Wait for shutdown signal
-	<-sigChan
-	log.Println("Shutting down...")
+	// Start the API server
+	go func() {
+		log.Printf("Starting API server on port %d", cfg.Server.Port)
+		if err := server.Start(); err != nil {
+			log.Fatalf("Failed to start API server: %v", err)
+		}
+	}()
 
-	// Cleanup
-	ticker.Stop()
-	cancel()
+	// Wait for shutdown
+	waitForShutdown(cancel, server)
+}
 
-	// Give the server a chance to shutdown gracefully
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer shutdownCancel()
-
-	if err := server.Shutdown(shutdownCtx); err != nil {
-		log.Printf("Server shutdown error: %v", err)
+func runAllCrawls(ctx context.Context, store storage.Store, maxConcurrentCrawls int) {
+	// Fetch all crawler configs
+	crawlerConfigs, err := store.ListCrawlerConfigs(ctx)
+	if err != nil {
+		log.Printf("Failed to fetch crawler configs: %v", err)
+		return
 	}
 
-	log.Println("Shutdown complete")
+	if len(crawlerConfigs) == 0 {
+		log.Println("No crawlers to run")
+		return
+	}
+
+	// Create a semaphore channel to limit concurrency
+	semaphore := make(chan struct{}, maxConcurrentCrawls)
+	wg := sync.WaitGroup{}
+
+	for _, config := range crawlerConfigs {
+		configCopy := *config // Dereference the pointer to create a value copy
+		wg.Add(1)
+
+		// Acquire a spot in the semaphore
+		semaphore <- struct{}{}
+
+		go func(cfg models.CrawlerConfig) {
+			defer wg.Done()
+			defer func() { <-semaphore }() // Release the spot in the semaphore
+
+			log.Printf("Starting crawl for %s...", cfg.SitemapURL)
+
+			// Create and run the crawler
+			c := crawler.NewCrawler(store, &crawler.CrawlerConfig{
+				SitemapURL:      cfg.SitemapURL,
+				UserAgent:       cfg.UserAgent,
+				MaxDepth:        cfg.MaxDepth,
+				AllowedDomains:  cfg.AllowedDomains,
+				DefaultCategory: cfg.DefaultCategory,
+			})
+
+			cs, err := c.MapCategoryStructure(ctx)
+			if err != nil {
+				log.Printf("Failed to map category structure for %s: %v", cfg.SitemapURL, err)
+				return
+			}
+
+			if err := c.Crawl(ctx, cs); err != nil {
+				log.Printf("Crawl failed for %s: %v", cfg.SitemapURL, err)
+			} else {
+				log.Printf("Crawl completed for %s", cfg.SitemapURL)
+			}
+		}(configCopy) // Pass the dereferenced value
+	}
+
+	wg.Wait() // Wait for all workers to finish
+	log.Println("All crawls completed")
+}
+
+func waitForShutdown(cancel context.CancelFunc, server *api.Server) {
+	// Handle system signals for shutdown
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+
+	<-sigChan
+	log.Println("Shutting down...")
+	cancel()
+
+	// Graceful server shutdown
+	ctx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer shutdownCancel()
+
+	if err := server.Shutdown(ctx); err != nil {
+		log.Printf("Error shutting down server: %v", err)
+	}
+	log.Println("Server shut down gracefully")
 }

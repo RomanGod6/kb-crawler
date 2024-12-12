@@ -9,6 +9,12 @@ interface CrawlerEntry {
     id: number;
     product: string;
     sitemapUrl: string;
+    mapUrl?: string;
+    userAgent?: string;
+    crawlInterval?: string;
+    maxDepth?: number;
+    defaultCategory?: string;
+    allowedDomains?: string[];
     status: 'Running' | 'Stopped' | 'Error';
     dateAdded: string;
     dateModified: string;
@@ -19,6 +25,12 @@ interface CrawlerEntry {
 const initialFormData: Partial<CrawlerEntry> = {
     product: '',
     sitemapUrl: '',
+    mapUrl: '',
+    userAgent: 'KIT Crawler', // Default User-Agent
+    crawlInterval: '24h', // Default Crawl Interval
+    maxDepth: 15, // Default Max Depth
+    defaultCategory: '',
+    allowedDomains: [],
     status: 'Stopped',
     dateAdded: '',
     dateModified: '',
@@ -31,7 +43,6 @@ const CrawlerDashboard: React.FC = () => {
     const [showForm, setShowForm] = useState(false);
     const [formData, setFormData] = useState<Partial<CrawlerEntry>>(initialFormData);
     const [editingId, setEditingId] = useState<number | null>(null);
-    const [logView, setLogView] = useState<string[] | null>(null);
 
     useEffect(() => {
         fetchEntries();
@@ -39,11 +50,17 @@ const CrawlerDashboard: React.FC = () => {
 
     const fetchEntries = async () => {
         try {
-            const response = await fetch('/api/crawlers');
+            const response = await fetch('http://localhost:8080/api/crawlers');
             const data = await response.json();
-            setEntries(data);
-        } catch (err) {
-            console.error('Error fetching entries:', err);
+
+            if (!data || data.length === 0) {
+                console.log('No crawlers available');
+                setEntries([]);
+            } else {
+                setEntries(data);
+            }
+        } catch (error) {
+            console.error('Error fetching crawlers:', error);
         }
     };
 
@@ -51,39 +68,65 @@ const CrawlerDashboard: React.FC = () => {
         e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>
     ) => {
         const { name, value } = e.target;
-        setFormData((prev) => ({ ...prev, [name]: value }));
+        setFormData((prev) => ({
+            ...prev,
+            [name]: name === 'maxDepth' ? parseInt(value, 10) || 0 : value,
+        }));
     };
 
+    const handleSubmit = async (e: React.FormEvent) => {
+        e.preventDefault();
+    
+        try {
+            const payload = {
+                ...formData,
+                allowedDomains: Array.isArray(formData.allowedDomains)
+                    ? formData.allowedDomains
+                    : formData.allowedDomains?.split(',').map((domain: string) => domain.trim()) || [],
+                dateModified: new Date().toISOString(),
+                dateAdded: formData.dateAdded || new Date().toISOString(),
+                status: 'Running',
+            };
+    
+            if (editingId !== null) {
+                // Update existing entry
+                await fetch(`http://localhost:8080/api/crawlers/${editingId}`, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(payload),
+                });
+            } else {
+                // Create new entry
+                await fetch('http://localhost:8080/api/crawlers', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(payload),
+                });
+            }
+    
+            fetchEntries(); // Refresh the entries after successful submission
+            setFormData(initialFormData);
+            setEditingId(null);
+            setShowForm(false);
+        } catch (error) {
+            console.error('Error saving entry:', error);
+        }
+    };
     const handleEdit = (entry: CrawlerEntry) => {
         setFormData(entry);
         setEditingId(entry.id);
         setShowForm(true);
     };
-
-    const handleSubmit = async (e: React.FormEvent) => {
-        e.preventDefault();
-
-        if (editingId !== null) {
-            const updatedEntries = entries.map((entry) =>
-                entry.id === editingId ? { ...entry, ...formData, dateModified: new Date().toISOString() } : entry
-            );
-            setEntries(updatedEntries);
-        } else {
-            const newEntry: CrawlerEntry = {
-                ...formData,
-                id: Date.now(),
-                dateAdded: new Date().toISOString(),
-                dateModified: new Date().toISOString(),
-                logs: [],
-            } as CrawlerEntry;
-            setEntries((prev) => [...prev, newEntry]);
-        }
-
-        setFormData(initialFormData);
-        setEditingId(null);
-        setShowForm(false);
+    
+    const getStatusBadgeClasses = (status: string) => {
+        if (status === 'Running') return 'bg-green-100 text-green-800';
+        if (status === 'Error') return 'bg-red-100 text-red-800';
+        return 'bg-gray-100 text-gray-800';
     };
-
     const handleCancel = () => {
         setFormData(initialFormData);
         setEditingId(null);
@@ -97,12 +140,6 @@ const CrawlerDashboard: React.FC = () => {
         link.href = URL.createObjectURL(blob);
         link.download = `crawler_entries_${new Date().toISOString().split('T')[0]}.csv`;
         link.click();
-    };
-
-    const getStatusBadgeClasses = (status: string) => {
-        if (status === 'Running') return 'bg-green-100 text-green-800';
-        if (status === 'Error') return 'bg-red-100 text-red-800';
-        return 'bg-gray-100 text-gray-800';
     };
 
     return (
@@ -131,6 +168,7 @@ const CrawlerDashboard: React.FC = () => {
 
             {showForm && (
                 <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center">
+                          <Card className="w-full max-w-2xl max-h-[90vh] overflow-y-auto">
                     <Card className="w-full max-w-2xl">
                         <CardHeader className="flex justify-between">
                             <CardTitle>{editingId ? 'Edit Entry' : 'Add Entry'}</CardTitle>
@@ -163,17 +201,68 @@ const CrawlerDashboard: React.FC = () => {
                                     />
                                 </div>
                                 <div>
-                                    <label>Status</label>
-                                    <select
-                                        name="status"
-                                        value={formData.status || 'Stopped'}
+                                    <label>Map URL</label>
+                                    <input
+                                        type="url"
+                                        name="mapUrl"
+                                        value={formData.mapUrl || ''}
                                         onChange={handleChange}
                                         className="w-full p-2 border rounded-md"
-                                    >
-                                        <option value="Running">Running</option>
-                                        <option value="Stopped">Stopped</option>
-                                        <option value="Error">Error</option>
-                                    </select>
+                                    />
+                                </div>
+                                <div>
+                                    <label>User Agent</label>
+                                    <input
+                                        type="text"
+                                        name="userAgent"
+                                        value={formData.userAgent || 'MyCrawler/1.0'}
+                                        onChange={handleChange}
+                                        className="w-full p-2 border rounded-md"
+                                    />
+                                </div>
+                                <div>
+                                    <label>Crawl Interval</label>
+                                    <input
+                                        type="text"
+                                        name="crawlInterval"
+                                        value={formData.crawlInterval || '24h'}
+                                        onChange={handleChange}
+                                        className="w-full p-2 border rounded-md"
+                                    />
+                                </div>
+                                <div>
+                                    <label>Max Depth</label>
+                                    <input
+                                        type="number"
+                                        name="maxDepth"
+                                        value={formData.maxDepth || 3}
+                                        onChange={handleChange}
+                                        className="w-full p-2 border rounded-md"
+                                    />
+                                </div>
+                                <div>
+                                    <label>Default Category</label>
+                                    <input
+                                        type="text"
+                                        name="defaultCategory"
+                                        value={formData.defaultCategory || ''}
+                                        onChange={handleChange}
+                                        className="w-full p-2 border rounded-md"
+                                    />
+                                </div>
+                                <div>
+                                    <label>Allowed Domains (comma-separated)</label>
+                                    <textarea
+    name="allowedDomains"
+    value={formData.allowedDomains?.join(', ') || ''} 
+    onChange={(e) =>
+        setFormData((prev) => ({
+            ...prev,
+            allowedDomains: e.target.value.split(',').map((domain) => domain.trim()), 
+        }))
+    }
+    className="w-full p-2 border rounded-md h-24"
+/>
                                 </div>
                                 <div className="flex justify-end space-x-4">
                                     <button
@@ -192,6 +281,7 @@ const CrawlerDashboard: React.FC = () => {
                                 </div>
                             </form>
                         </CardContent>
+                    </Card>
                     </Card>
                 </div>
             )}

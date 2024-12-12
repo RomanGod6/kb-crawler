@@ -42,8 +42,8 @@ type ArticleTag struct {
 
 type CrawlerConfig struct {
 	ID              uuid.UUID  `json:"id"`
-	SitemapURL      string     `json:"sitemapURL"`
-	MapURL          string     `json:"mapURL"`
+	SitemapURL      string     `json:"sitemapUrl"`
+	MapURL          string     `json:"mapUrl"`
 	UserAgent       string     `json:"userAgent"`
 	CrawlInterval   string     `json:"crawlInterval"`
 	MaxDepth        int        `json:"maxDepth"`
@@ -52,6 +52,7 @@ type CrawlerConfig struct {
 	Status          string     `json:"status"`
 	LastRun         *time.Time `json:"lastRun,omitempty"`
 	Errors          []string   `json:"errors,omitempty"`
+	Logs            []string   `json:"logs,omitempty"`
 	CreatedAt       time.Time  `json:"createdAt"`
 	UpdatedAt       time.Time  `json:"updatedAt"`
 }
