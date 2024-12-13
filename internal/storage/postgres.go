@@ -51,6 +51,7 @@ func (s *PostgresStore) Initialize() error {
         )`,
 		`CREATE TABLE IF NOT EXISTS crawler_configs (
             id UUID PRIMARY KEY,
+            product TEXT NOT NULL,
             sitemap_url TEXT NOT NULL,
             map_url TEXT NOT NULL,
             user_agent TEXT NOT NULL,
@@ -61,6 +62,7 @@ func (s *PostgresStore) Initialize() error {
             status TEXT NOT NULL,
             last_run TIMESTAMP,
             errors TEXT[],
+            logs TEXT[],
             created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
         )`,
@@ -79,7 +81,6 @@ func (s *PostgresStore) Initialize() error {
 	return nil
 }
 
-// Existing methods for Category
 func (s *PostgresStore) CreateCategory(ctx context.Context, category *models.Category) error {
 	query := `
         INSERT INTO categories (id, name, description, parent_id, created_at, updated_at)
@@ -366,8 +367,8 @@ func (s *PostgresStore) SearchArticles(ctx context.Context, query string, limit,
 // New Crawler Config Methods
 func (s *PostgresStore) ListCrawlerConfigs(ctx context.Context) ([]*models.CrawlerConfig, error) {
 	query := `
-        SELECT id, sitemap_url, map_url, user_agent, crawl_interval, max_depth,
-               default_category, allowed_domains, status, last_run, errors,
+        SELECT id, product, sitemap_url, map_url, user_agent, crawl_interval, max_depth,
+               default_category, allowed_domains, status, last_run, errors, logs,
                created_at, updated_at
         FROM crawler_configs
         ORDER BY created_at DESC
@@ -384,6 +385,7 @@ func (s *PostgresStore) ListCrawlerConfigs(ctx context.Context) ([]*models.Crawl
 		config := &models.CrawlerConfig{}
 		err := rows.Scan(
 			&config.ID,
+			&config.Product,
 			&config.SitemapURL,
 			&config.MapURL,
 			&config.UserAgent,
@@ -394,6 +396,7 @@ func (s *PostgresStore) ListCrawlerConfigs(ctx context.Context) ([]*models.Crawl
 			&config.Status,
 			&config.LastRun,
 			pq.Array(&config.Errors),
+			pq.Array(&config.Logs),
 			&config.CreatedAt,
 			&config.UpdatedAt,
 		)
@@ -408,8 +411,8 @@ func (s *PostgresStore) ListCrawlerConfigs(ctx context.Context) ([]*models.Crawl
 
 func (s *PostgresStore) GetCrawlerConfig(ctx context.Context, id uuid.UUID) (*models.CrawlerConfig, error) {
 	query := `
-        SELECT id, sitemap_url, map_url, user_agent, crawl_interval, max_depth,
-               default_category, allowed_domains, status, last_run, errors,
+        SELECT id, product, sitemap_url, map_url, user_agent, crawl_interval, max_depth,
+               default_category, allowed_domains, status, last_run, errors, logs,
                created_at, updated_at
         FROM crawler_configs
         WHERE id = $1
@@ -418,6 +421,7 @@ func (s *PostgresStore) GetCrawlerConfig(ctx context.Context, id uuid.UUID) (*mo
 	config := &models.CrawlerConfig{}
 	err := s.db.QueryRowContext(ctx, query, id).Scan(
 		&config.ID,
+		&config.Product,
 		&config.SitemapURL,
 		&config.MapURL,
 		&config.UserAgent,
@@ -428,6 +432,7 @@ func (s *PostgresStore) GetCrawlerConfig(ctx context.Context, id uuid.UUID) (*mo
 		&config.Status,
 		&config.LastRun,
 		pq.Array(&config.Errors),
+		pq.Array(&config.Logs),
 		&config.CreatedAt,
 		&config.UpdatedAt,
 	)
@@ -445,14 +450,15 @@ func (s *PostgresStore) GetCrawlerConfig(ctx context.Context, id uuid.UUID) (*mo
 func (s *PostgresStore) CreateCrawlerConfig(ctx context.Context, config *models.CrawlerConfig) error {
 	query := `
         INSERT INTO crawler_configs (
-            id, sitemap_url, map_url, user_agent, crawl_interval, max_depth,
-            default_category, allowed_domains, status, last_run, errors,
+            id, product, sitemap_url, map_url, user_agent, crawl_interval, max_depth,
+            default_category, allowed_domains, status, last_run, errors, logs,
             created_at, updated_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
     `
 
 	_, err := s.db.ExecContext(ctx, query,
 		config.ID,
+		config.Product,
 		config.SitemapURL,
 		config.MapURL,
 		config.UserAgent,
@@ -463,6 +469,7 @@ func (s *PostgresStore) CreateCrawlerConfig(ctx context.Context, config *models.
 		config.Status,
 		config.LastRun,
 		pq.Array(config.Errors),
+		pq.Array(config.Logs),
 		config.CreatedAt,
 		config.UpdatedAt,
 	)
@@ -473,22 +480,25 @@ func (s *PostgresStore) CreateCrawlerConfig(ctx context.Context, config *models.
 func (s *PostgresStore) UpdateCrawlerConfig(ctx context.Context, config *models.CrawlerConfig) error {
 	query := `
         UPDATE crawler_configs SET
-            sitemap_url = $2,
-            map_url = $3,
-            user_agent = $4,
-            crawl_interval = $5,
-            max_depth = $6,
-            default_category = $7,
-            allowed_domains = $8,
-            status = $9,
-            last_run = $10,
-            errors = $11,
+            product = $2,
+            sitemap_url = $3,
+            map_url = $4,
+            user_agent = $5,
+            crawl_interval = $6,
+            max_depth = $7,
+            default_category = $8,
+            allowed_domains = $9,
+            status = $10,
+            last_run = $11,
+            errors = $12,
+            logs = $13,
             updated_at = CURRENT_TIMESTAMP
         WHERE id = $1
     `
 
 	result, err := s.db.ExecContext(ctx, query,
 		config.ID,
+		config.Product,
 		config.SitemapURL,
 		config.MapURL,
 		config.UserAgent,
@@ -499,6 +509,7 @@ func (s *PostgresStore) UpdateCrawlerConfig(ctx context.Context, config *models.
 		config.Status,
 		config.LastRun,
 		pq.Array(config.Errors),
+		pq.Array(config.Logs),
 	)
 	if err != nil {
 		return err

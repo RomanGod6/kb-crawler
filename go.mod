@@ -6,9 +6,9 @@ toolchain go1.23.4
 
 require (
 	github.com/PuerkitoBio/goquery v1.5.1
+	github.com/chromedp/chromedp v0.11.2
 	github.com/gin-contrib/cors v1.7.2
 	github.com/gin-gonic/gin v1.10.0
-	github.com/gocolly/colly v1.2.0
 	github.com/gocolly/colly/v2 v2.1.0
 	github.com/google/uuid v1.6.0
 	github.com/lib/pq v1.10.9
@@ -25,7 +25,6 @@ require (
 	github.com/bytedance/sonic v1.11.6 // indirect
 	github.com/bytedance/sonic/loader v0.1.1 // indirect
 	github.com/chromedp/cdproto v0.0.0-20241208230723-d1c7de7e5dd2 // indirect
-	github.com/chromedp/chromedp v0.11.2 // indirect
 	github.com/chromedp/sysutil v1.1.0 // indirect
 	github.com/cloudwego/base64x v0.1.4 // indirect
 	github.com/cloudwego/iasm v0.2.0 // indirect

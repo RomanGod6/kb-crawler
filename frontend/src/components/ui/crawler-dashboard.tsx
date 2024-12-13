@@ -76,7 +76,7 @@ const CrawlerDashboard: React.FC = () => {
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-    
+
         try {
             const payload = {
                 ...formData,
@@ -87,10 +87,11 @@ const CrawlerDashboard: React.FC = () => {
                 dateAdded: formData.dateAdded || new Date().toISOString(),
                 status: 'Running',
             };
-    
+
+            let response;
             if (editingId !== null) {
                 // Update existing entry
-                await fetch(`http://localhost:8080/api/crawlers/${editingId}`, {
+                response = await fetch(`http://localhost:8080/api/crawlers/${editingId}`, {
                     method: 'PUT',
                     headers: {
                         'Content-Type': 'application/json',
@@ -98,17 +99,28 @@ const CrawlerDashboard: React.FC = () => {
                     body: JSON.stringify(payload),
                 });
             } else {
-                // Create new entry
-                await fetch('http://localhost:8080/api/crawlers', {
+                // Create new entry and start crawling
+                response = await fetch('http://localhost:8080/api/crawlers', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
                     },
                     body: JSON.stringify(payload),
                 });
+
+                const createdConfig = await response.json();
+
+                // Start the crawler
+                await fetch('http://localhost:8080/api/crawlers/start', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(createdConfig),
+                });
             }
-    
-            fetchEntries(); // Refresh the entries after successful submission
+
+            fetchEntries();
             setFormData(initialFormData);
             setEditingId(null);
             setShowForm(false);
@@ -121,7 +133,7 @@ const CrawlerDashboard: React.FC = () => {
         setEditingId(entry.id);
         setShowForm(true);
     };
-    
+
     const getStatusBadgeClasses = (status: string) => {
         if (status === 'Running') return 'bg-green-100 text-green-800';
         if (status === 'Error') return 'bg-red-100 text-red-800';
@@ -168,120 +180,120 @@ const CrawlerDashboard: React.FC = () => {
 
             {showForm && (
                 <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center">
-                          <Card className="w-full max-w-2xl max-h-[90vh] overflow-y-auto">
-                    <Card className="w-full max-w-2xl">
-                        <CardHeader className="flex justify-between">
-                            <CardTitle>{editingId ? 'Edit Entry' : 'Add Entry'}</CardTitle>
-                            <button onClick={handleCancel} className="p-2">
-                                <X className="w-4 h-4" />
-                            </button>
-                        </CardHeader>
-                        <CardContent>
-                            <form onSubmit={handleSubmit} className="space-y-4">
-                                <div>
-                                    <label>Product</label>
-                                    <input
-                                        type="text"
-                                        name="product"
-                                        value={formData.product || ''}
-                                        onChange={handleChange}
-                                        className="w-full p-2 border rounded-md"
-                                        required
-                                    />
-                                </div>
-                                <div>
-                                    <label>Sitemap URL</label>
-                                    <input
-                                        type="url"
-                                        name="sitemapUrl"
-                                        value={formData.sitemapUrl || ''}
-                                        onChange={handleChange}
-                                        className="w-full p-2 border rounded-md"
-                                        required
-                                    />
-                                </div>
-                                <div>
-                                    <label>Map URL</label>
-                                    <input
-                                        type="url"
-                                        name="mapUrl"
-                                        value={formData.mapUrl || ''}
-                                        onChange={handleChange}
-                                        className="w-full p-2 border rounded-md"
-                                    />
-                                </div>
-                                <div>
-                                    <label>User Agent</label>
-                                    <input
-                                        type="text"
-                                        name="userAgent"
-                                        value={formData.userAgent || 'MyCrawler/1.0'}
-                                        onChange={handleChange}
-                                        className="w-full p-2 border rounded-md"
-                                    />
-                                </div>
-                                <div>
-                                    <label>Crawl Interval</label>
-                                    <input
-                                        type="text"
-                                        name="crawlInterval"
-                                        value={formData.crawlInterval || '24h'}
-                                        onChange={handleChange}
-                                        className="w-full p-2 border rounded-md"
-                                    />
-                                </div>
-                                <div>
-                                    <label>Max Depth</label>
-                                    <input
-                                        type="number"
-                                        name="maxDepth"
-                                        value={formData.maxDepth || 3}
-                                        onChange={handleChange}
-                                        className="w-full p-2 border rounded-md"
-                                    />
-                                </div>
-                                <div>
-                                    <label>Default Category</label>
-                                    <input
-                                        type="text"
-                                        name="defaultCategory"
-                                        value={formData.defaultCategory || ''}
-                                        onChange={handleChange}
-                                        className="w-full p-2 border rounded-md"
-                                    />
-                                </div>
-                                <div>
-                                    <label>Allowed Domains (comma-separated)</label>
-                                    <textarea
-    name="allowedDomains"
-    value={formData.allowedDomains?.join(', ') || ''} 
-    onChange={(e) =>
-        setFormData((prev) => ({
-            ...prev,
-            allowedDomains: e.target.value.split(',').map((domain) => domain.trim()), 
-        }))
-    }
-    className="w-full p-2 border rounded-md h-24"
-/>
-                                </div>
-                                <div className="flex justify-end space-x-4">
-                                    <button
-                                        type="button"
-                                        onClick={handleCancel}
-                                        className="bg-gray-300 px-4 py-2 rounded-md"
-                                    >
-                                        Cancel
-                                    </button>
-                                    <button
-                                        type="submit"
-                                        className="bg-blue-500 text-white px-4 py-2 rounded-md"
-                                    >
-                                        {editingId ? 'Update' : 'Add'}
-                                    </button>
-                                </div>
-                            </form>
-                        </CardContent>
-                    </Card>
+                    <Card className="w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+                        <Card className="w-full max-w-2xl">
+                            <CardHeader className="flex justify-between">
+                                <CardTitle>{editingId ? 'Edit Entry' : 'Add Entry'}</CardTitle>
+                                <button onClick={handleCancel} className="p-2">
+                                    <X className="w-4 h-4" />
+                                </button>
+                            </CardHeader>
+                            <CardContent>
+                                <form onSubmit={handleSubmit} className="space-y-4">
+                                    <div>
+                                        <label>Product</label>
+                                        <input
+                                            type="text"
+                                            name="product"
+                                            value={formData.product || ''}
+                                            onChange={handleChange}
+                                            className="w-full p-2 border rounded-md"
+                                            required
+                                        />
+                                    </div>
+                                    <div>
+                                        <label>Sitemap URL</label>
+                                        <input
+                                            type="url"
+                                            name="sitemapUrl"
+                                            value={formData.sitemapUrl || ''}
+                                            onChange={handleChange}
+                                            className="w-full p-2 border rounded-md"
+                                            required
+                                        />
+                                    </div>
+                                    <div>
+                                        <label>Map URL</label>
+                                        <input
+                                            type="url"
+                                            name="mapUrl"
+                                            value={formData.mapUrl || ''}
+                                            onChange={handleChange}
+                                            className="w-full p-2 border rounded-md"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label>User Agent</label>
+                                        <input
+                                            type="text"
+                                            name="userAgent"
+                                            value={formData.userAgent || 'MyCrawler/1.0'}
+                                            onChange={handleChange}
+                                            className="w-full p-2 border rounded-md"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label>Crawl Interval</label>
+                                        <input
+                                            type="text"
+                                            name="crawlInterval"
+                                            value={formData.crawlInterval || '24h'}
+                                            onChange={handleChange}
+                                            className="w-full p-2 border rounded-md"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label>Max Depth</label>
+                                        <input
+                                            type="number"
+                                            name="maxDepth"
+                                            value={formData.maxDepth || 3}
+                                            onChange={handleChange}
+                                            className="w-full p-2 border rounded-md"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label>Default Category</label>
+                                        <input
+                                            type="text"
+                                            name="defaultCategory"
+                                            value={formData.defaultCategory || ''}
+                                            onChange={handleChange}
+                                            className="w-full p-2 border rounded-md"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label>Allowed Domains (comma-separated)</label>
+                                        <textarea
+                                            name="allowedDomains"
+                                            value={formData.allowedDomains?.join(', ') || ''}
+                                            onChange={(e) =>
+                                                setFormData((prev) => ({
+                                                    ...prev,
+                                                    allowedDomains: e.target.value.split(',').map((domain) => domain.trim()),
+                                                }))
+                                            }
+                                            className="w-full p-2 border rounded-md h-24"
+                                        />
+                                    </div>
+                                    <div className="flex justify-end space-x-4">
+                                        <button
+                                            type="button"
+                                            onClick={handleCancel}
+                                            className="bg-gray-300 px-4 py-2 rounded-md"
+                                        >
+                                            Cancel
+                                        </button>
+                                        <button
+                                            type="submit"
+                                            className="bg-blue-500 text-white px-4 py-2 rounded-md"
+                                        >
+                                            {editingId ? 'Update' : 'Add'}
+                                        </button>
+                                    </div>
+                                </form>
+                            </CardContent>
+                        </Card>
                     </Card>
                 </div>
             )}

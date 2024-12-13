@@ -1,47 +1,18 @@
+// internal/crawler/parser.go
 package crawler
 
 import (
 	"bytes"
-	"encoding/xml"
-	"io"
-	"net/http"
+	"fmt"
 	"strings"
 
+	"github.com/PuerkitoBio/goquery"
+	"github.com/gocolly/colly/v2"
+	"github.com/romangod6/kb-crawler/internal/utils"
 	"golang.org/x/net/html"
 )
 
-type Sitemap struct {
-	XMLName xml.Name `xml:"urlset"`
-	URLs    []URL    `xml:"url"`
-}
-
-type URL struct {
-	Loc        string `xml:"loc"`
-	LastMod    string `xml:"lastmod,omitempty"`
-	ChangeFreq string `xml:"changefreq,omitempty"`
-	Priority   string `xml:"priority,omitempty"`
-}
-
-func parseSitemap(url string) (*Sitemap, error) {
-	resp, err := http.Get(url)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	var sitemap Sitemap
-	if err := xml.Unmarshal(body, &sitemap); err != nil {
-		return nil, err
-	}
-
-	return &sitemap, nil
-}
-
+// ParsedContent holds the extracted content from an HTML page.
 type ParsedContent struct {
 	Title      string
 	Content    string
@@ -50,131 +21,133 @@ type ParsedContent struct {
 	CategoryID string
 }
 
-func parseHTMLContent(content string) (*ParsedContent, error) {
-	doc, err := html.Parse(strings.NewReader(content))
+// ExtractProductFeatureTags extracts the ProductFeatureTags from the <meta> tags in the <head> section.
+func ExtractProductFeatureTags(e *colly.HTMLElement, tags *[]string, logger *utils.CrawlerLogger) {
+	e.DOM.Find("meta[name='ProductFeatureTags']").Each(func(i int, s *goquery.Selection) {
+		content, exists := s.Attr("content")
+		if exists {
+			pftags := strings.Split(content, ",")
+			for _, pftag := range pftags {
+				pftag = strings.TrimSpace(pftag)
+				if pftag != "" {
+					logger.LogDebug("Found ProductFeatureTag: %s", pftag)
+					*tags = append(*tags, pftag)
+				}
+			}
+		}
+	})
+
+	if len(*tags) > 0 {
+		logger.LogInfo("Found ProductFeatureTags: %v", *tags)
+	} else {
+		logger.LogDebug("No ProductFeatureTags found in meta elements")
+	}
+}
+
+// ParseHTMLContent parses the raw HTML content and extracts relevant information.
+func ParseHTMLContent(content string) (*ParsedContent, error) {
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(content))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("error parsing HTML: %w", err)
 	}
 
 	parsed := &ParsedContent{
 		Tags: make([]string, 0),
 	}
 
-	var f func(*html.Node)
-	f = func(n *html.Node) {
-		if n.Type == html.ElementNode {
-			// Parse title
-			if n.Data == "title" {
-				parsed.Title = getNodeText(n)
-			}
+	// Extract title
+	parsed.Title = strings.TrimSpace(doc.Find("title").First().Text())
 
-			// Parse meta tags
-			if n.Data == "meta" {
-				name := getAttr(n, "name")
-				content := getAttr(n, "content")
-				switch name {
-				case "author":
-					parsed.Author = content
-				case "category-id":
-					parsed.CategoryID = content
-				case "keywords":
-					parsed.Tags = strings.Split(content, ",")
+	// Extract author
+	doc.Find("meta[name='author']").Each(func(i int, s *goquery.Selection) {
+		if content, exists := s.Attr("content"); exists {
+			parsed.Author = strings.TrimSpace(content)
+		}
+	})
+
+	// Extract category-id
+	doc.Find("meta[name='category-id']").Each(func(i int, s *goquery.Selection) {
+		if content, exists := s.Attr("content"); exists {
+			parsed.CategoryID = strings.TrimSpace(content)
+		}
+	})
+
+	// Extract keywords as tags
+	doc.Find("meta[name='keywords']").Each(func(i int, s *goquery.Selection) {
+		if content, exists := s.Attr("content"); exists {
+			keywords := strings.Split(content, ",")
+			for _, kw := range keywords {
+				kw = strings.TrimSpace(kw)
+				if kw != "" {
+					parsed.Tags = append(parsed.Tags, strings.ToLower(kw))
 				}
 			}
+		}
+	})
 
-			// Parse article content
-			if n.Data == "article" {
-				var buf bytes.Buffer
-				html.Render(&buf, n)
-				parsed.Content = buf.String()
+	// Extract ProductFeatureTags using the dedicated function
+	doc.Find("meta[name='ProductFeatureTags']").Each(func(i int, s *goquery.Selection) {
+		if content, exists := s.Attr("content"); exists {
+			pftags := strings.Split(content, ",")
+			for _, pftag := range pftags {
+				pftag = strings.TrimSpace(pftag)
+				if pftag != "" {
+					parsed.Tags = append(parsed.Tags, strings.ToLower(pftag))
+				}
 			}
 		}
-		for c := n.FirstChild; c != nil; c = c.NextSibling {
-			f(c)
-		}
-	}
-	f(doc)
+	})
 
-	// Clean up content
-	parsed.Content = cleanHTML(parsed.Content)
-	parsed.Tags = cleanTags(parsed.Tags)
+	// Extract main content from the <article> tag or other selectors
+	var mainContent string
+	if article := doc.Find("article"); article.Length() > 0 {
+		mainContent, _ = article.Html()
+	} else {
+		// Fallback to the entire body
+		mainContent, _ = doc.Find("body").Html()
+	}
+
+	parsed.Content = cleanHTML(mainContent)
 
 	return parsed, nil
 }
 
-func getAttr(n *html.Node, key string) string {
-	for _, attr := range n.Attr {
-		if attr.Key == key {
-			return attr.Val
+// cleanHTML cleans the HTML content by removing scripts, styles, comments, and unnecessary whitespace.
+func cleanHTML(content string) string {
+	// Parse the HTML content
+	doc, err := html.Parse(strings.NewReader(content))
+	if err != nil {
+		return content // Return original content if parsing fails
+	}
+
+	// Remove script and style elements
+	var removeNodes func(*html.Node)
+	removeNodes = func(n *html.Node) {
+		if n.Type == html.ElementNode && (n.Data == "script" || n.Data == "style") {
+			n.Parent.RemoveChild(n)
+			return
+		}
+		// Remove comments
+		if n.Type == html.CommentNode {
+			n.Parent.RemoveChild(n)
+			return
+		}
+		for c := n.FirstChild; c != nil; {
+			next := c.NextSibling
+			removeNodes(c)
+			c = next
 		}
 	}
-	return ""
-}
+	removeNodes(doc)
 
-func getNodeText(n *html.Node) string {
-	if n.Type == html.TextNode {
-		return n.Data
+	// Render the cleaned HTML back to a string
+	var buf bytes.Buffer
+	if err := html.Render(&buf, doc); err != nil {
+		return content // Return original content if rendering fails
 	}
-	var text string
-	for c := n.FirstChild; c != nil; c = c.NextSibling {
-		text += getNodeText(c)
-	}
-	return strings.TrimSpace(text)
-}
-
-func cleanHTML(content string) string {
-	// Remove script and style elements
-	content = removeElements(content, "script")
-	content = removeElements(content, "style")
-
-	// Remove HTML comments
-	content = removeComments(content)
 
 	// Convert multiple spaces to single space
-	content = strings.Join(strings.Fields(content), " ")
+	cleaned := strings.Join(strings.Fields(buf.String()), " ")
 
-	return strings.TrimSpace(content)
-}
-
-func cleanTags(tags []string) []string {
-	cleaned := make([]string, 0)
-	for _, tag := range tags {
-		tag = strings.TrimSpace(tag)
-		if tag != "" {
-			cleaned = append(cleaned, strings.ToLower(tag))
-		}
-	}
-	return cleaned
-}
-
-func removeElements(content string, tag string) string {
-	startTag := "<" + tag
-	endTag := "</" + tag + ">"
-	for {
-		startIdx := strings.Index(content, startTag)
-		if startIdx == -1 {
-			break
-		}
-		endIdx := strings.Index(content[startIdx:], endTag)
-		if endIdx == -1 {
-			break
-		}
-		content = content[:startIdx] + content[startIdx+endIdx+len(endTag):]
-	}
-	return content
-}
-
-func removeComments(content string) string {
-	for {
-		startIdx := strings.Index(content, "<!--")
-		if startIdx == -1 {
-			break
-		}
-		endIdx := strings.Index(content[startIdx:], "-->")
-		if endIdx == -1 {
-			break
-		}
-		content = content[:startIdx] + content[startIdx+endIdx+3:]
-	}
-	return content
+	return strings.TrimSpace(cleaned)
 }

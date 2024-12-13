@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -13,6 +14,7 @@ import (
 	"github.com/romangod6/kb-crawler/internal/crawler"
 	"github.com/romangod6/kb-crawler/internal/models"
 	"github.com/romangod6/kb-crawler/internal/storage"
+	"github.com/romangod6/kb-crawler/internal/utils"
 )
 
 type Handler struct {
@@ -198,15 +200,40 @@ func (h *Handler) CreateCrawlerConfig(c *gin.Context) {
 		config.ID = uuid.New()
 	}
 
-	// Set default status if not provided
-	if config.Status == "" {
-		config.Status = "stopped"
+	// Set initial values for new crawler config
+	now := time.Now()
+	config.Status = "Running"
+	config.IsFirstRun = true
+	config.CreatedAt = now
+	config.UpdatedAt = now
+
+	// Calculate next scheduled run based on crawl interval
+	if interval, err := time.ParseDuration(config.CrawlInterval); err == nil {
+		nextRun := now.Add(interval)
+		config.NextRun = &nextRun
 	}
 
 	if err := h.store.CreateCrawlerConfig(c.Request.Context(), &config); err != nil {
 		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: "Failed to create crawler config"})
 		return
 	}
+
+	// Start the crawler in a goroutine
+	go func() {
+		log.Printf("Starting crawler for config ID: %s", config.ID)
+		if err := h.runCrawler(config); err != nil {
+			log.Printf("Error running crawler: %v", err)
+			config.Status = "Error"
+			config.Errors = append(config.Errors, err.Error())
+		} else {
+			config.Status = "Completed"
+		}
+
+		// Update the config status
+		if err := h.store.UpdateCrawlerConfig(context.Background(), &config); err != nil {
+			log.Printf("Error updating crawler status: %v", err)
+		}
+	}()
 
 	c.JSON(http.StatusCreated, config)
 }
@@ -306,20 +333,93 @@ func (h *Handler) StartCrawl(c *gin.Context) {
 	c.JSON(http.StatusAccepted, crawlConfig)
 }
 func (h *Handler) runCrawler(config models.CrawlerConfig) error {
+	// Create logger for this crawl
+	logger, err := utils.NewCrawlerLogger(config.Product)
+	if err != nil {
+		log.Printf("Failed to create logger: %v", err)
+		return fmt.Errorf("failed to create logger: %w", err)
+	}
+	defer logger.Close()
+
+	logger.LogInfo("Starting crawler for %s (ID: %s)", config.Product, config.ID)
+	logger.LogInfo("Configuration details:")
+	logger.LogInfo("  Sitemap URL: %s", config.SitemapURL)
+	logger.LogInfo("  Map URL: %s", config.MapURL)
+	logger.LogInfo("  Max Depth: %d", config.MaxDepth)
+	logger.LogInfo("  User Agent: %s", config.UserAgent)
+	logger.LogInfo("  Crawl Interval: %s", config.CrawlInterval)
+	logger.LogInfo("  Default Category: %s", config.DefaultCategory)
+	logger.LogInfo("  Allowed Domains: %v", config.AllowedDomains)
+
+	// Set default MapURL if not provided
+	if config.MapURL == "" {
+		config.MapURL = strings.Replace(config.SitemapURL, "Sitemap.xml", "0HOME/Home.htm", 1)
+		logger.LogInfo("Set default Map URL to: %s", config.MapURL)
+	}
+
 	crawlerInstance := crawler.NewCrawler(h.store, &crawler.CrawlerConfig{
 		SitemapURL:      config.SitemapURL,
+		MapURL:          config.MapURL,
 		UserAgent:       config.UserAgent,
 		MaxDepth:        config.MaxDepth,
 		AllowedDomains:  config.AllowedDomains,
 		DefaultCategory: config.DefaultCategory,
 	})
 
-	categoryStructure, err := crawlerInstance.MapCategoryStructure(context.Background())
-	if err != nil {
-		return fmt.Errorf("failed to map category structure: %w", err)
+	// Update status to Running
+	config.Status = "Running"
+	if err := h.store.UpdateCrawlerConfig(context.Background(), &config); err != nil {
+		logger.LogError("Failed to update crawler status: %v", err)
+		return fmt.Errorf("failed to update crawler status: %w", err)
 	}
 
+	logger.LogInfo("Beginning category structure mapping...")
+	categoryStructure, err := crawlerInstance.MapCategoryStructure(context.Background())
+	if err != nil {
+		config.Status = "Error"
+		config.Errors = append(config.Errors, err.Error())
+		h.store.UpdateCrawlerConfig(context.Background(), &config)
+		logger.LogError("Failed to map category structure: %v", err)
+		return fmt.Errorf("failed to map category structure: %w", err)
+	}
+	logger.LogInfo("Category structure mapping completed successfully")
+
+	logger.LogInfo("Starting crawl process...")
 	err = crawlerInstance.Crawl(context.Background(), categoryStructure)
+	now := time.Now()
+
+	if err != nil {
+		config.Status = "Error"
+		config.Errors = append(config.Errors, err.Error())
+		logger.LogError("Crawl failed with error: %v", err)
+	} else {
+		config.Status = "Completed"
+		config.LastRun = &now
+
+		// Calculate next run time
+		if interval, err := time.ParseDuration(config.CrawlInterval); err == nil {
+			nextRun := now.Add(interval)
+			config.NextRun = &nextRun
+			logger.LogInfo("Next scheduled run: %v", nextRun)
+		}
+		logger.LogInfo("Crawl completed successfully")
+	}
+
+	config.IsFirstRun = false
+	config.UpdatedAt = now
+
+	if updateErr := h.store.UpdateCrawlerConfig(context.Background(), &config); updateErr != nil {
+		logger.LogError("Error updating crawler status: %v", updateErr)
+	}
+
+	logger.LogInfo("Crawler execution finished. Status: %s", config.Status)
+	if len(config.Errors) > 0 {
+		logger.LogError("Errors encountered during crawl:")
+		for _, err := range config.Errors {
+			logger.LogError("  - %s", err)
+		}
+	}
+
 	if err != nil {
 		return fmt.Errorf("crawl failed: %w", err)
 	}

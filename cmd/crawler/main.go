@@ -80,11 +80,25 @@ func runAllCrawls(ctx context.Context, store storage.Store, maxConcurrentCrawls 
 		return
 	}
 
+	now := time.Now()
+
 	// Create a semaphore channel to limit concurrency
 	semaphore := make(chan struct{}, maxConcurrentCrawls)
 	wg := sync.WaitGroup{}
 
 	for _, config := range crawlerConfigs {
+		// Skip if crawler is already running
+		if config.Status == "Running" {
+			log.Printf("Skipping crawler %s (%s) as it's already running", config.Product, config.ID)
+			continue
+		}
+
+		// Skip if it's not time to run yet
+		if config.NextRun != nil && now.Before(*config.NextRun) {
+			log.Printf("Skipping crawler %s (%s) as it's not scheduled yet", config.Product, config.ID)
+			continue
+		}
+
 		configCopy := *config // Dereference the pointer to create a value copy
 		wg.Add(1)
 
@@ -117,13 +131,12 @@ func runAllCrawls(ctx context.Context, store storage.Store, maxConcurrentCrawls 
 			} else {
 				log.Printf("Crawl completed for %s", cfg.SitemapURL)
 			}
-		}(configCopy) // Pass the dereferenced value
+		}(configCopy)
 	}
 
 	wg.Wait() // Wait for all workers to finish
 	log.Println("All crawls completed")
 }
-
 func waitForShutdown(cancel context.CancelFunc, server *api.Server) {
 	// Handle system signals for shutdown
 	sigChan := make(chan os.Signal, 1)
